@@ -1,0 +1,17 @@
+name = "triangle-live-music"
+compatibility_date = "2025-10-19"
+main = "worker.js"
+
+[[r2_buckets]]
+binding = "DATA_BUCKET"
+bucket_name = "triangle-live-music-data"
+
+[env.production]
+routes = [
+  { pattern = "nctrianglemusic.live", custom_domain = true },
+]
+
+[[rules]]
+type = "Text"
+globs = ["**/*.html"]
+fallthrough = false
