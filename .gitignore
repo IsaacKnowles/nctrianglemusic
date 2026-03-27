@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Data files (R2 is source of truth)
+pipeline/live_music_events.json
+pipeline/live_music_events.json.bak
+pipeline/artists_db.json
+pipeline/venues_db.json
+
+# Scraper scratch space
+pipeline/.tmp/
+
+# Credentials
+pipeline/.env
+
+# Wrangler cache
+.wrangler/
+
+# macOS
+.DS_Store
+
+# Claude Code local settings (machine-specific permissions)
+.claude/settings.local.json
