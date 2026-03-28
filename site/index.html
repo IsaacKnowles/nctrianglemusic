@@ -718,6 +718,10 @@
         <input type="checkbox" id="show-past">
         Show past
       </label>
+      <label class="toggle-label">
+        <input type="checkbox" id="show-non-music">
+        Non-music events
+      </label>
       <button class="btn-text" id="all-btn">All</button>
       <button class="btn-text" id="none-btn">None</button>
       <div class="view-toggle">
@@ -785,6 +789,7 @@ let venueNames   = [];
 let activeVenues = new Set();
 let activeCities = new Set(CITIES);
 let showPast     = false;
+let showNonMusic = false;
 let searchQuery  = '';
 let viewMode     = 'list';   // 'list' | 'calendar'
 
@@ -843,6 +848,7 @@ function getFilteredEvents() {
     const city = VENUE_CITY[e.venueKey];
     if (city && !activeCities.has(city)) return false;
     if (!showPast && isPast(e)) return false;
+    if (!showNonMusic && e.is_live_music === false) return false;
     if (searchQuery) {
       const genres = resolveGenres(e.artists || []);
       const hay = [e.title, e.subtitle, e.presenter, e.venueName, ...genres].join(' ').toLowerCase();
@@ -1197,6 +1203,11 @@ function updateStickyTop() {
 // ── Control wiring ────────────────────────────────────────────────────────────
 document.getElementById('show-past').addEventListener('change', e => {
   showPast = e.target.checked;
+  renderEvents();
+});
+
+document.getElementById('show-non-music').addEventListener('change', e => {
+  showNonMusic = e.target.checked;
   renderEvents();
 });
 
