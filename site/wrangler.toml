@@ -11,6 +11,10 @@ routes = [
   { pattern = "nctrianglemusic.live", custom_domain = true },
 ]
 
+[[env.production.r2_buckets]]
+binding = "DATA_BUCKET"
+bucket_name = "triangle-live-music-data"
+
 [[rules]]
 type = "Text"
 globs = ["**/*.html"]
