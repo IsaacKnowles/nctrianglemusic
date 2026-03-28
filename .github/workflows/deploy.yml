@@ -16,5 +16,7 @@ jobs:
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.DEPLOY_SITE_TO_CLOUDFLARE_WORKER }}
+          accountId: ff3b5c84222b83cb726411e958b47227
+          wranglerVersion: '4.78.0'
           workingDirectory: site
           command: deploy --env production
