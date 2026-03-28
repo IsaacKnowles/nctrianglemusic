@@ -241,12 +241,9 @@ def fetch_admission(event_url: str) -> str:
         print(f"  WARNING: could not fetch {event_url}: {e}", file=sys.stderr)
         return ""
 
-    # Try meta price tag (structured data)
-    meta_m = re.search(r'<meta[^>]+itemprop=["\']price["\'][^>]+content=["\']([^"\']+)["\']', html, re.I)
-    if meta_m:
-        return meta_m.group(1).strip()
-
     # Look for price in admission/ticket context — scan ~500 chars around keywords
+    # NOTE: intentionally skip itemprop="price" meta tags — ticketing platforms often
+    # set these to placeholder/minimum values (e.g. $1) that don't reflect real prices.
     price_pattern = re.compile(
         r'\$\s*\d+(?:\.\d{2})?(?:\s*(?:adv(?:ance)?|day[\s-]of|door|ga|general))?'
         r'(?:\s*/\s*\$\s*\d+(?:\.\d{2})?(?:\s*(?:adv(?:ance)?|day[\s-]of|door))?)?',

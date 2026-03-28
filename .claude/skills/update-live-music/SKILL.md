@@ -80,6 +80,7 @@ Navigate to the venue's `events_url`. Use `read_page` at depth 2 to explore the 
   3. On detail pages with a "TICKETS" or "BUY" button/link, **follow that link or inspect the embed** — it often reveals a ticket widget showing tier prices and sold-out status. For OpenDate events, check `https://app.opendate.io/confirms/<event_id>/web_orders/new` directly.
   4. If the detail page links to an external ticket seller (Eventbrite, See Tickets, BoldType, TicketSpice, etc.), navigate there to read tier prices.
   5. Only leave `admission` blank if no price is findable after exhausting these steps.
+- **Use only human-readable price text** from the event description or ticket purchase page — the actual words/numbers a user would read. Do **not** trust structured data meta tags (`itemprop="price"`, JSON-LD `price` fields, etc.): these often contain placeholder or minimum values (e.g. `$1`) set by ticketing platforms and are not authoritative.
 - Leave `admission` blank (`""`) only if the price is genuinely unavailable after checking the individual event page.
 - Do **not** infer free — an event is only free if the page explicitly says "Free" or "$0". A blank admission field means unknown, not free.
 - If the listing page doesn't show prices, navigate to each event's detail page (via the Chrome plugin) to retrieve them. Batch this across events — don't skip it.
@@ -201,7 +202,7 @@ For each `"new"` or `"changed"` event from the diff output, write its full event
 python3 pipeline/cli.py set <event_id_tag>:<event_id> .tmp/events/<id>.json
 ```
 
-After all `set` calls, update `last_updated` for the processed venue to the current UTC ISO timestamp, then run repair and prune:
+After all `set` calls, run repair and prune (`last_updated` is automatically stamped on the venue by each `set`, `delete`, and `prune` call):
 ```bash
 python3 pipeline/cli.py repair
 python3 pipeline/cli.py prune --days 30

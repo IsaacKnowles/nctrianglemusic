@@ -8,7 +8,7 @@
 | `status` | All venues ranked from most stale to most recent, with event counts |
 | `stale` | Just the single stalest venue — what this skill uses at Step 2 |
 | `get <tag:id>` | Print a single event as JSON (e.g. `kings-id:holy-fuck`) |
-| `set <tag:id> <file.json>` | Insert or overwrite one event from a JSON file |
+| `set <tag:id> <file.json>` | Insert or overwrite one event from a JSON file; auto-stamps `last_updated` on the venue |
 | `diff <tag> <scraped.json> [--report <file>]` | Compare scraped events against stored state; outputs JSON array with `status` (`new`/`changed`/`unchanged`/`possibly_removed`), `field_diffs` per event. Warns if scraped count is less than 50% of stored future events. `--report` writes a Markdown change log. |
 | `delete <tag:id>` | Remove an event from state only |
 | `prune [--days N]` | Remove events older than N days (default 30) |

@@ -59,6 +59,11 @@ from .artists import (
     upsert_artists,
 )
 
+def _touch_venue(venue: dict):
+    """Stamp last_updated on a venue dict to the current UTC time."""
+    venue["last_updated"] = NOW_UTC.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 # ── Commands ───────────────────────────────────────────────────────────────────
 
 def cmd_status(args):
@@ -164,11 +169,13 @@ def cmd_set(args):
     for i, e in enumerate(events):
         if e.get("id") == event_id:
             events[i] = new_event
+            _touch_venue(v)
             print(f"✏️  Updated event '{event_id}' in {v['name']}")
             save_state(data)
             _upsert_event_artists(new_event)
             return
     events.append(new_event)
+    _touch_venue(v)
     print(f"➕ Inserted new event '{event_id}' into {v['name']}")
     save_state(data)
     _upsert_event_artists(new_event)
@@ -201,6 +208,7 @@ def cmd_delete(args):
     if before == after:
         print(f"WARNING: event '{event_id}' not found in {v['name']} — nothing changed")
     else:
+        _touch_venue(v)
         print(f"🗑️  Deleted '{event_id}' from {v['name']}")
         save_state(data)
 
@@ -230,6 +238,7 @@ def cmd_prune(args):
             print(f"  {v['name']}: removing {len(removed)} event(s) older than {cutoff}")
             for e in removed:
                 print(f"    - [{e.get('start_datetime','')}] {e.get('title','')}")
+            _touch_venue(v)
         v["events"] = kept
         total_removed += len(removed)
     if total_removed == 0:
