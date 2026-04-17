@@ -287,14 +287,14 @@ For each `"new"` or `"changed"` event from the diff output, write its full event
 python3 pipeline/cli.py set <event_id_tag>:<event_id> .tmp/events/<id>.json
 ```
 
-After all `set` calls, run repair, prune, and genre enrichment:
+After all `set` calls, run repair and prune, then kick off genre enrichment in the background:
 ```bash
 python3 pipeline/cli.py repair
 python3 pipeline/cli.py prune --days 30
-python3 pipeline/enrich_genres.py
+python3 pipeline/enrich_genres.py &
 ```
 
-`enrich_genres.py` fetches Spotify genres and Bandcamp tags for any artists lacking enrichment. It is safe to run after every scrape — it skips artists enriched within the last 30 days.
+`enrich_genres.py` fetches Spotify genres and Bandcamp tags for any artists lacking enrichment. It can take several minutes for large batches — always run it with `&` so it doesn't block the upload step. It is safe to run after every scrape — it skips artists enriched within the last 30 days. If it exits with "quota exhausted", just re-run it later; the Spotify rate limit resets on a rolling 30-second window and large Retry-After values (~86400s) are a known API quirk meaning "back off now", not a true 24-hour ban.
 
 **Temp file cleanup:** Delete `.tmp/scraped_<venue_key>.json` and `.tmp/events/` after saving. Keep `.tmp/<venue_key>_changes.md` (the diff report) — do not delete it.
 

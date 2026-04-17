@@ -116,7 +116,7 @@ def fetch_artists_by_ids(ids: list[str], token: str) -> dict[str, list[str]]:
             data = resp.json()
             result[data["id"]] = data.get("genres", [])
             break
-        time.sleep(0.2)
+        time.sleep(0.5)
     return result
 
 
