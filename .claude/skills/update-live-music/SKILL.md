@@ -124,7 +124,7 @@ Server-rendered HTML — use `WebFetch` to read the homepage, write `.tmp/kings_
 Two rooms tracked separately. See [venues/cats-cradle.md](venues/cats-cradle.md) for JS extraction snippet (with fallback), scrape/diff commands, and pricing notes.
 
 #### Chapel of Bones (`chapel-of-bones-id`)
-TickPick widget; no individual event pages. See [venues/chapel-of-bones.md](venues/chapel-of-bones.md) for JS extraction snippet and scrape/diff commands.
+TickPick widget rendered in an **iframe** — `javascript_tool` cannot access the DOM. Use `get_page_text` to extract rendered event text, click "Show more" first to load all events. Pre-split ` / ` titles before writing raw JSON. Use `scrape generic`. See [venues/chapel-of-bones.md](venues/chapel-of-bones.md) for format, ID conventions, non-live-music event types, and scrape/diff commands.
 
 #### Neptune's Parlour (`neptunes-id`)
 **URL:** `https://www.neptunesraleigh.com/events` — Squarespace, renders in plain HTML. Use `get_page_text` to read the listing. Extract event slugs from the DOM with `javascript_tool` (`a[href*="/events/"]`). Titles use `//` as multi-act separator — pre-split before writing raw JSON. Use `scrape generic`.
@@ -198,7 +198,7 @@ python3 pipeline/cli.py scrape generic --raw .tmp/<venue_key>_raw.json \
 
 ### Scraper Fragility Notes
 
-Title splitting is handled automatically by per-venue scrapers (Kings, Cat's Cradle, Chapel of Bones). For venues using `scrape generic`, **you** must pre-split titles before writing the raw JSON. Either way, these patterns apply (in priority order):
+Title splitting is handled automatically by per-venue scrapers (Kings, Cat's Cradle). For venues using `scrape generic` (including Chapel of Bones), **you** must pre-split titles before writing the raw JSON. Either way, these patterns apply (in priority order):
 1. ` / ` → co-headliners: `"A / B"` → title=`"A"`, subtitle=`"with B"`
 2. ` w/ ` → support acts: `"A w/ B, C"` → title=`"A"`, subtitle=`"with B, C"`
 3. `, ` → multiple acts (if all parts ≤ 6 words): `"A, B, C"` → title=`"A"`, subtitle=`"with B, C"`

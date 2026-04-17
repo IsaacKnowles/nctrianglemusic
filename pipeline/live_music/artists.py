@@ -14,6 +14,7 @@ NON_MUSIC_KEYWORDS = [
     "karaoke", "trivia", "comedy", "open mic", "open jam", "drag", "burlesque",
     "film", "screening", "class", "lesson", "workshop", "market", "private",
     "yoga", "dance party", "bingo", "shrimp boil", "whiskey tasting", "improv theater",
+    "book club", "giveaway",
 ]
 
 
