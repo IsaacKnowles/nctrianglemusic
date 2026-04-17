@@ -83,7 +83,11 @@ def normalize_for_hash(s: str) -> str:
             result.append("-")
         else:
             result.append(c)
-    return " ".join("".join(result).casefold().split())
+    normalized = " ".join("".join(result).casefold().split())
+    # Strip ordinal suffixes from day numbers (1st/2nd/3rd/4th → 1/2/3/4)
+    # so "april 17th, 2026" and "april 17, 2026" hash identically.
+    normalized = re.sub(r'(?<=\d)(st|nd|rd|th)\b', '', normalized)
+    return normalized
 
 
 def content_hash(event: dict) -> str:
