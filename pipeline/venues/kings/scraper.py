@@ -2,43 +2,18 @@
 """
 Kings event scraper / normalizer.
 
-Kings (https://www.kingsraleigh.com/) is JS-rendered. The /shows page renders
-empty; events are listed on the homepage. Individual show pages are also
-JS-rendered and cannot be fetched directly, so we extract all event data from
-the homepage DOM in one JS call, then normalize it here.
+Normalizes raw event JSON (written by Claude from a WebFetch of the Kings homepage)
+into the standard event schema. See .claude/skills/update-live-music/venues/kings.md
+for extraction instructions.
 
 USAGE
 -----
-Step 1 — Extract raw event data from the browser.
-  Navigate to https://www.kingsraleigh.com/ and run this JavaScript in the
-  console (or via javascript_tool in Claude):
-
-    JSON.stringify(Array.from(document.querySelectorAll('[class*="show"], [class*="event"], article'))
-      .map(el => ({
-        title: el.querySelector('[class*="title"], h2, h3')?.textContent.trim() || '',
-        date:  el.querySelector('[class*="date"], time')?.textContent.trim() || '',
-        time:  el.querySelector('[class*="time"]')?.textContent.trim() || '',
-        price: el.querySelector('[class*="price"], [class*="ticket"]')?.textContent.trim() || '',
-        url:   el.querySelector('a[href*="/shows/"]')?.href || ''
-      })).filter(e => e.title && e.url))
-
-  NOTE: Selectors are best-effort and may need tuning — verify output before
-  saving. The script will warn if 0 events are parsed.
-
-  Save the resulting JSON string to .tmp/kings_raw.json
-
-Step 2 — Run this script:
-    python3 scraper_kings.py [--raw .tmp/kings_raw.json] [--out .tmp/scraped_kings.json] [--days 90]
-
-  Defaults:
-    --raw   .tmp/kings_raw.json
-    --out   .tmp/scraped_kings.json
-    --days  90   (lookahead window from today)
+    python3 pipeline/cli.py scrape kings [--raw .tmp/kings_raw.json] [--out .tmp/scraped_kings.json] [--days 90]
 
 OUTPUT
 ------
 Normalized event JSON list ready for:
-    python3 live_music_cli.py diff kings-id .tmp/scraped_kings.json
+    python3 pipeline/cli.py diff kings-id .tmp/scraped_kings.json
 """
 
 from __future__ import annotations
@@ -181,15 +156,17 @@ def split_title_subtitle(raw_title: str) -> tuple[str, str, str]:
         parts = [p.strip() for p in raw_title.split(" / ")]
         return parts[0], "with " + ", ".join(parts[1:]), presenter
 
+    # Check " w/ " before ", " so "X w/ A, B" splits as title="X", subtitle="with A, B"
+    # rather than incorrectly splitting on the comma first.
+    if " w/ " in raw_title:
+        idx = raw_title.index(" w/ ")
+        return raw_title[:idx].strip(), "with " + raw_title[idx + 4:].strip(), presenter
+
     if ", " in raw_title:
         parts = [p.strip() for p in raw_title.split(", ")]
         if all(len(p.split()) <= 6 for p in parts) and len(parts) >= 2:
             if not re.search(r'\b(the|learn|edition|market|tribute|competition|club)\b', raw_title, re.I):
                 return parts[0], "with " + ", ".join(parts[1:]), presenter
-
-    if " w/ " in raw_title:
-        idx = raw_title.index(" w/ ")
-        return raw_title[:idx].strip(), "w/ " + raw_title[idx + 4:].strip(), presenter
 
     return raw_title, "", presenter
 
@@ -224,10 +201,10 @@ def parse_args():
     return raw_file, out_file, days
 
 
-def run(raw_path=DEFAULT_RAW, out_path=DEFAULT_OUT, days=DEFAULT_DAYS):
+def run(raw_path=DEFAULT_RAW, out_path=DEFAULT_OUT, days=DEFAULT_DAYS, **_):
     """Normalize raw Kings event JSON into the standard schema.
 
-    raw_path: path to .tmp/kings_raw.json (JS-extracted DOM events)
+    raw_path: path to .tmp/kings_raw.json (written by Claude from WebFetch)
     out_path: path to write normalized output
     days:     lookahead window in days
     """

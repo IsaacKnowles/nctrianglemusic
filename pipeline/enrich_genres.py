@@ -29,6 +29,21 @@ from difflib import SequenceMatcher
 
 import requests
 
+# Load .env from pipeline/ or repo root (whichever exists first), if not already set
+def _load_dotenv():
+    here = pathlib.Path(__file__).parent
+    for candidate in [here / ".env", here.parent / ".env"]:
+        if candidate.exists():
+            for line in candidate.read_text().splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, _, v = line.partition("=")
+                    k = k.strip().removeprefix("export").strip()
+                    os.environ.setdefault(k, v.strip())
+            break
+
+_load_dotenv()
+
 ARTISTS_DB = str(pathlib.Path(__file__).parent / "artists_db.json")
 TOKEN_URL = "https://accounts.spotify.com/api/token"
 ARTISTS_URL = "https://api.spotify.com/v1/artists"
@@ -81,15 +96,27 @@ def fetch_artists_by_ids(ids: list[str], token: str) -> dict[str, list[str]]:
     """Given Spotify artist IDs, return {id: [genres]}. Fetches one at a time (batch endpoint requires extended API access)."""
     result = {}
     headers = {"Authorization": f"Bearer {token}"}
-    for sp_id in ids:
-        resp = requests.get(f"{ARTISTS_URL}/{sp_id}", headers=headers, timeout=10)
-        if resp.status_code == 401:
-            print("\n❌ Spotify token expired (HTTP 401). Re-run the script to get a fresh token.", file=sys.stderr)
-            sys.exit(1)
-        resp.raise_for_status()
-        data = resp.json()
-        result[data["id"]] = data.get("genres", [])
-        time.sleep(0.1)
+    total = len(ids)
+    for i, sp_id in enumerate(ids, 1):
+        print(f"  [{i}/{total}] fetching {sp_id}", flush=True)
+        for attempt in range(5):
+            resp = requests.get(f"{ARTISTS_URL}/{sp_id}", headers=headers, timeout=10)
+            if resp.status_code == 401:
+                print("\n❌ Spotify token expired (HTTP 401). Re-run the script to get a fresh token.", file=sys.stderr)
+                sys.exit(1)
+            if resp.status_code == 429:
+                retry_after = int(resp.headers.get("Retry-After", 5 * (attempt + 1)))
+                if retry_after > 60:
+                    print(f"\n❌ Spotify rate-limited with Retry-After={retry_after}s — quota exhausted for today. Re-run later.", file=sys.stderr)
+                    sys.exit(1)
+                print(f"  ⏳ Spotify rate-limited — waiting {retry_after}s (attempt {attempt + 1}/5)", flush=True)
+                time.sleep(retry_after)
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            result[data["id"]] = data.get("genres", [])
+            break
+        time.sleep(0.5)
     return result
 
 
@@ -97,16 +124,26 @@ def search_spotify(name: str, token: str, min_score: float) -> dict | None:
     """Search Spotify by name. Returns {id, name, genres, score} or None.
     Raises SystemExit on 401 (token expired) so the operator knows to re-run."""
     headers = {"Authorization": f"Bearer {token}"}
-    resp = requests.get(
-        SEARCH_URL,
-        headers=headers,
-        params={"q": name, "type": "artist", "limit": 5},
-        timeout=10,
-    )
-    if resp.status_code == 401:
-        print("\n❌ Spotify token expired (HTTP 401). Re-run the script to get a fresh token.", file=sys.stderr)
-        sys.exit(1)
-    resp.raise_for_status()
+    for attempt in range(5):
+        resp = requests.get(
+            SEARCH_URL,
+            headers=headers,
+            params={"q": name, "type": "artist", "limit": 5},
+            timeout=10,
+        )
+        if resp.status_code == 401:
+            print("\n❌ Spotify token expired (HTTP 401). Re-run the script to get a fresh token.", file=sys.stderr)
+            sys.exit(1)
+        if resp.status_code == 429:
+            retry_after = int(resp.headers.get("Retry-After", 5 * (attempt + 1)))
+            if retry_after > 60:
+                print(f"\n❌ Spotify rate-limited with Retry-After={retry_after}s — quota exhausted for today. Re-run later.", file=sys.stderr)
+                sys.exit(1)
+            print(f"  ⏳ Spotify rate-limited searching '{name}' — waiting {retry_after}s")
+            time.sleep(retry_after)
+            continue
+        resp.raise_for_status()
+        break
     candidates = resp.json().get("artists", {}).get("items", [])
     best, best_score = None, 0.0
     for c in candidates:
@@ -200,14 +237,14 @@ def enrich(db: dict, token: str, dry_run: bool, limit: int | None, min_score: fl
     needs_genre = [(slug, entry) for slug, entry in db.items() if not entry.get("genre")]
     if limit:
         needs_genre = needs_genre[:limit]
-    print(f"Artists needing genre: {len(needs_genre)}\n")
+    print(f"Artists needing genre: {len(needs_genre)}\n", flush=True)
 
     # ── Spotify Pass 1a: batch-fetch artists that already have a Spotify URL ──
     has_url = [(s, e) for s, e in needs_genre if spotify_id_from_url(e.get("links", {}).get("spotify", ""))]
     still_need: list[tuple[str, dict]] = []  # populated by both Pass 1a and 1b; consumed by Bandcamp pass
 
     if has_url:
-        print(f"── Spotify: batch-fetching {len(has_url)} artists with existing URLs")
+        print(f"── Spotify: batch-fetching {len(has_url)} artists with existing URLs", flush=True)
         ids = [spotify_id_from_url(e["links"]["spotify"]) for _, e in has_url]
         genres_by_id = fetch_artists_by_ids(ids, token)
         for (slug, entry), sp_id in zip(has_url, ids):
@@ -224,9 +261,10 @@ def enrich(db: dict, token: str, dry_run: bool, limit: int | None, min_score: fl
 
     # ── Spotify Pass 1b: search for artists without a Spotify URL ──
     no_url = [(s, e) for s, e in needs_genre if not spotify_id_from_url(e.get("links", {}).get("spotify", ""))]
-    print(f"\n── Spotify: searching for {len(no_url)} artists without Spotify URL")
+    print(f"\n── Spotify: searching for {len(no_url)} artists without Spotify URL", flush=True)
     for i, (slug, entry) in enumerate(no_url):
         name = entry["name"]
+        print(f"  [{i+1}/{len(no_url)}] searching: {name}", flush=True)
         try:
             result = search_spotify(name, token, min_score)
         except requests.RequestException as exc:
@@ -239,13 +277,13 @@ def enrich(db: dict, token: str, dry_run: bool, limit: int | None, min_score: fl
             print(f"  ✅ {name} → '{result['name']}' (score={result['score']:.2f}): {result['genres']}")
             if not dry_run:
                 entry["genre"] = result["genres"]
-                entry["links"]["spotify"] = f"https://open.spotify.com/artist/{result['id']}"
+                entry.setdefault("links", {})["spotify"] = f"https://open.spotify.com/artist/{result['id']}"
                 entry["last_enriched"] = now
             stats["spotify_updated"] += 1
         elif result:
             print(f"  ⚠️  {name} → '{result['name']}' matched but Spotify has no genres — will try Bandcamp")
             if not dry_run:
-                entry["links"]["spotify"] = f"https://open.spotify.com/artist/{result['id']}"
+                entry.setdefault("links", {})["spotify"] = f"https://open.spotify.com/artist/{result['id']}"
             still_need.append((slug, entry))
         else:
             print(f"  —  {name}: no confident Spotify match — will try Bandcamp")
@@ -259,9 +297,10 @@ def enrich(db: dict, token: str, dry_run: bool, limit: int | None, min_score: fl
         stats["not_found"] += len(still_need)
         return stats
 
-    print(f"\n── Bandcamp: searching for {len(still_need)} artists not resolved by Spotify")
+    print(f"\n── Bandcamp: searching for {len(still_need)} artists not resolved by Spotify", flush=True)
     for i, (slug, entry) in enumerate(still_need):
         name = entry["name"]
+        print(f"  [{i+1}/{len(still_need)}] Bandcamp: {name}", flush=True)
         try:
             result = search_bandcamp(name, min_score)
         except Exception as exc:
@@ -294,6 +333,7 @@ def enrich(db: dict, token: str, dry_run: bool, limit: int | None, min_score: fl
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(line_buffering=True)
     args = parse_args()
     client_id = os.environ.get("SPOTIFY_CLIENT_ID", "")
     client_secret = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
@@ -301,13 +341,15 @@ if __name__ == "__main__":
         print("ERROR: Set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET env vars", file=sys.stderr)
         sys.exit(1)
 
+    start_time = time.monotonic()
     token = get_token(client_id, client_secret)
-    print(f"✅ Got Spotify token\n")
+    print(f"✅ Got Spotify token\n", flush=True)
 
     with open(ARTISTS_DB) as f:
         db = json.load(f)
 
     stats = enrich(db, token, args.dry_run, args.limit, args.min_score, args.no_bandcamp)
+    elapsed = time.monotonic() - start_time
 
     if not args.dry_run:
         tmp = ARTISTS_DB + ".tmp"
@@ -320,6 +362,7 @@ if __name__ == "__main__":
     print(f"  Spotify updated:  {stats['spotify_updated']}")
     print(f"  Bandcamp updated: {stats['bandcamp_updated']}")
     print(f"  Not found:        {stats['not_found']}")
+    print(f"  Elapsed:          {elapsed:.0f}s")
     if args.no_bandcamp and stats["not_found"] > 0:
         print("  (Bandcamp pass skipped — run without --no-bandcamp to process remaining)")
     if args.dry_run:

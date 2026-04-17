@@ -13,6 +13,7 @@ pipeline/venues_db.json
 pipeline/.tmp/
 
 # Credentials
+.env
 pipeline/.env
 
 # Wrangler cache

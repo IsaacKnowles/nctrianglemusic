@@ -238,7 +238,6 @@ def cmd_prune(args):
             print(f"  {v['name']}: removing {len(removed)} event(s) older than {cutoff}")
             for e in removed:
                 print(f"    - [{e.get('start_datetime','')}] {e.get('title','')}")
-            _touch_venue(v)
         v["events"] = kept
         total_removed += len(removed)
     if total_removed == 0:
@@ -1063,8 +1062,8 @@ def cmd_scrape(args):
 
     Usage: scrape <venue-key> [--raw <file>] [--out <file>] [--days <N>] [--no-fetch]
 
-    The raw JSON file must already exist — place it there using the JS extraction
-    step documented in pipeline/venues/<venue>/notes.md.
+    The raw JSON file must already exist — write it from a WebFetch of the venue page
+    (see .claude/skills/update-live-music/venues/<venue>.md for extraction instructions).
 
     For venues with no custom scraper (plain-HTML venues), use:
         scrape generic --raw .tmp/<venue>_raw.json --out .tmp/scraped_<venue>.json

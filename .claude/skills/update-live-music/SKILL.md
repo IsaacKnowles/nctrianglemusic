@@ -14,41 +14,61 @@ Each run picks **exactly one venue** — whichever has the oldest `last_updated`
 
 Working directory: `/Users/isaacknowles/Code/nctrianglemusic/`
 
-A management CLI (`pipeline/cli.py`) lives alongside the state file and handles all state reads, lookups, writes, and maintenance. Prefer it over manually parsing or editing the JSON wherever possible.
+A management CLI (`pipeline/cli.py`) handles all reads, writes, and maintenance of the three database files (`live_music_events.json`, `artists_db.json`, `venues_db.json`). Never directly edit those files. Writing temporary JSON to `.tmp/` (raw extracts, scraped output, etc.) is fine and expected. If an operation on the databases cannot be performed via the CLI, the skill run has FAILED — notify the user, explain the failure, and stop.
 
 Each event has this normalized schema:
 ```json
-{
-  "id": "slug-from-url",
-  "title": "...",
-  "subtitle": "with ...",
-  "presenter": "Promoter presents",
-  "date_str": "Saturday, March 1st, 2026",
-  "time": "8:00PM",
-  "doors": "7:00PM",
-  "admission": "$15 adv / $20 day-of",
-  "music_links": { "spotify": "...", "youtube": "...", "bandcamp": "..." },
-  "event_url": "https://venue-website.com/shows/event-slug",
-  "start_datetime": "2026-03-01T20:00:00",
-  "doors_datetime": "2026-03-01T19:00:00",
-  "end_datetime": "2026-03-01T22:00:00",
-  "content_hash": "md5_of_key_fields"
-}
+⏺ {
+    "id": "slug-from-url",
+    "title": "Headliner Name",
+    "subtitle": "with Supporting Act",
+    "presenter": "Promoter presents",
+    "is_live_music": true,
+    "artists": [
+      { "name": "Headliner Name", "slug": "headliner-slug", "role": "headliner" },
+      { "name": "Supporting Act", "slug": "supporting-slug", "role": "support" }
+    ],
+    "date_str": "Saturday, March 1st, 2026",
+    "time": "8:00PM",
+    "doors": "7:00PM",
+    "admission": "$15 adv / $20 day-of",
+    "music_links": { "spotify": "https://...", "youtube": "https://...", "bandcamp": "https://..." },
+    "event_url": "https://venue-website.com/shows/event-slug",
+    "start_datetime": "2026-03-01T20:00:00",
+    "doors_datetime": "2026-03-01T19:00:00",
+    "end_datetime": "2026-03-01T22:00:00",
+    "content_hash": "md5_of_key_fields"
+  }
 ```
+  Notes:
+  - subtitle — empty string "" if no support acts
+  - presenter — empty string "" if no promoter
+  - is_live_music — true for concerts/DJs, false for karaoke, comedy, etc.
+  - artists — empty array [] when is_live_music is false; role is "headliner" or "support"
+  - music_links — omits keys that are unknown rather than storing empty strings (e.g. only "spotify" and "youtube" if
+  Bandcamp is unknown)
+  - doors_datetime — can be null if doors time was not scraped
+  - date_str — may or may not include ordinal suffix (3rd vs 3) depending on venue/scraper; normalize_for_hash treats
+  them as equivalent
+
 
 ---
+As you go through steps, if you encounter errors or have to take significant action to improvise, notify the user and stop. This issue needs to be resolved by the user with your assistance. Log smaller or more annoying issues as you'll be providing a report at the end.
 
 ## Step 1: Select the stalest venue
 
-Run the CLI's `stale` command to identify the target venue for this run:
+Run `status` first to see the full picture — venue rankings, stored event counts, and staleness — then `stale` to confirm the target:
 
 ```bash
+python3 pipeline/cli.py status
 python3 pipeline/cli.py stale
 ```
 
-This prints the venue name, its key, and its `events_url`. Log which venue was selected.
+`status` shows all venues ranked from most to least stale, with stored event counts. **Read this output before proceeding** — it tells you how many events are already in state for the target venue, which is essential context for interpreting the diff output. `stale` confirms the single venue to process.
 
-> Venues with `last_updated: null` are treated as never updated and always go first. To see the full ranking, use `status` instead.
+> Venues with `last_updated: null` are treated as never updated and always go first.
+
+Log the target venue name, key, `events_url`, and current stored event count.
 
 **Pre-run audit:** Run `audit` before scraping to surface any pre-existing data quality issues:
 
@@ -62,9 +82,9 @@ Log the output. Do not abort if issues are found — they may be from a prior ru
 
 ## Step 2: Scrape the venue's events page
 
-Navigate to the venue's `events_url`. Use `read_page` at depth 2 to explore the page structure; use `ref_id` to drill into containers if output is too large. Strongly prefer the venue's website over ticket sellers.
+Navigate to the venue's `events_url`. Strongly prefer the venue's website over ticket sellers.
 
-**Lookahead window:** Only capture events within the next `_meta.lookahead_days` days from today.
+-**Lookahead window:** Only capture events within the next 90 days from today (the default `--days 90` passed to all scrapers)
 
 **Extract per event:**
 - Title (headliner), supporting acts/subtitle, presenter/promoter
@@ -91,34 +111,104 @@ Navigate to the venue's `events_url`. Use `read_page` at depth 2 to explore the 
 
 Write all scraped events to `.tmp/scraped_<venue_key>.json` for use in the diff step. Create the `.tmp/` folder if it doesn't exist. Delete this file during cleanup (Step 7); keep any `--report` output.
 
-**Venue-specific notes:**
-- **Kings**: See `pipeline/venues/kings/notes.md` for JS extraction snippet and quirks.
-- **Neptune's Parlour** (`https://www.neptunesraleigh.com/events`): Each show at `/events/{slug}`.
-- **Chapel of Bones**: See `pipeline/venues/chapel_of_bones/notes.md` for TickPick widget extraction and quirks.
-- **Cat's Cradle**: Two rooms tracked separately. See `pipeline/venues/cats_cradle/notes.md` for JS extraction snippet, room detection, and price-fetching notes.
-- **Slim's** (`https://slimsraleigh.com/`): plain HTML; use `pipeline/cli.py scrape generic`. Fetch monthly calendar pages (`/calendar/YYYY-MM/`) for the full lookahead window. Skip Open Jam and Mingle @ Slim's entries.
-- **Lincoln Theatre** (`https://lincolntheatre.com/events/`): no special handling.
-- **Local 506** (`https://local506.com/events/`): no special handling.
-- **Motorco** (`https://motorcomusic.com/`): no special handling.
-- **The Pinhook** (`https://thepinhook.com/events/`): no special handling.
-- **The Fruit** (`https://www.durhamfruit.com/`): no special handling.
-- **Sharp 9 Gallery** (`https://www.durhamjazzworkshop.org/`): no special handling.
-- **Stanczyks** (`https://www.stanczyksdurham.com/#/events`): JS-rendered SPA. Use JavaScript DOM extraction to pull event data.
+---
 
-**Plain-HTML venues (WebFetch-accessible):** For venues that render events in standard HTML, use `WebFetch` to collect event data across monthly calendar pages, then write a simple raw JSON file and normalize it with `pipeline/cli.py scrape generic`:
+### Venue-Specific Extraction
+
+> **Skill accuracy check:** Each venue entry below makes specific claims about how the site works (rendering method, URL structure, extraction approach, etc.). Before proceeding, verify these claims against what you actually observe. If a significant claim no longer holds — the site has been redesigned, a JS framework replaced plain HTML, the URL structure changed, etc. — **stop, notify the user, and work with them to update this skill** before continuing. Do not silently improvise around structural changes; an updated skill is more valuable than a one-off workaround.
+
+#### Kings (`kings-id`)
+Server-rendered HTML — use `WebFetch` to read the homepage, write `.tmp/kings_raw.json`, then run the scraper. See [venues/kings.md](venues/kings.md) for the raw format, extraction notes, and scrape/diff commands.
+
+#### Cat's Cradle (`cats-cradle-id`, `cats-cradle-br-id`)
+Two rooms tracked separately. See [venues/cats-cradle.md](venues/cats-cradle.md) for JS extraction snippet (with fallback), scrape/diff commands, and pricing notes.
+
+#### Chapel of Bones (`chapel-of-bones-id`)
+TickPick widget rendered in an **iframe** — `javascript_tool` cannot access the DOM. Use `get_page_text` to extract rendered event text, click "Show more" first to load all events. Pre-split ` / ` titles before writing raw JSON. Use `scrape generic`. See [venues/chapel-of-bones.md](venues/chapel-of-bones.md) for format, ID conventions, non-live-music event types, and scrape/diff commands.
+
+#### Neptune's Parlour (`neptunes-id`)
+**URL:** `https://www.neptunesraleigh.com/events` — Squarespace, renders in plain HTML. Use `get_page_text` to read the listing. Extract event slugs from the DOM with `javascript_tool` (`a[href*="/events/"]`). Titles use `//` as multi-act separator — pre-split before writing raw JSON. Use `scrape generic`.
 
 ```bash
-# Raw input format (.tmp/<venue_key>_raw.json): list of objects with fields:
-#   slug, title, subtitle, presenter, date (YYYY-MM-DD), show_time (HH:MM 24h),
-#   end_time (HH:MM, optional), admission (optional), url
-python3 pipeline/cli.py scrape generic --raw .tmp/<venue_key>_raw.json \
-                           --out .tmp/scraped_<venue_key>.json \
-                           [--days 90]
+python3 pipeline/cli.py scrape generic --raw .tmp/neptunes_raw.json --out .tmp/scraped_neptunes.json
+python3 pipeline/cli.py diff neptunes-id .tmp/scraped_neptunes.json --report .tmp/neptunes_changes.md
 ```
 
-See `pipeline/venues/<venue>/scraper.py` for full field spec. Omit Open Jams, private events, and non-music entries before writing the raw JSON. The script handles date_str formatting, doors derivation (show − 1h), end_datetime, and lookahead filtering.
+#### Slim's (`slims-id`)
+**URL:** `https://slimsraleigh.com/` — plain HTML; use `scrape generic`. Fetch monthly calendar pages (`/calendar/YYYY-MM/`) for the full lookahead window. Skip "Open Jam" and "Mingle @ Slim's" entries.
 
-If the page is JS-heavy and `read_page` shows no events, try `wait` (2s) then re-read, or `get_page_text` as fallback. As a last resort, use JavaScript (`javascript_tool`) to extract event data directly from the DOM.
+```bash
+python3 pipeline/cli.py scrape generic --raw .tmp/slims_raw.json --out .tmp/scraped_slims.json
+```
+
+#### Stanczyks (`stanczyks-id`)
+**URL:** `https://www.stanczyksdurham.com/#/events` — JS-rendered SPA. Use `javascript_tool` to extract event data from the DOM, then write to raw JSON and use `scrape generic`.
+
+```bash
+python3 pipeline/cli.py scrape generic --raw .tmp/stanczyks_raw.json --out .tmp/scraped_stanczyks.json
+python3 pipeline/cli.py diff stanczyks-id .tmp/scraped_stanczyks.json --report .tmp/stanczyks_changes.md
+```
+
+#### Plain-HTML venues (no special handling)
+- **Lincoln Theatre** `https://lincolntheatre.com/events/`
+- **Local 506** `https://local506.com/events/`
+- **Motorco** `https://motorcomusic.com/`
+- **The Pinhook** `https://thepinhook.com/events/`
+- **The Fruit** `https://www.durhamfruit.com/`
+- **Sharp 9 Gallery** `https://www.durhamjazzworkshop.org/`
+
+For plain-HTML venues, Claude reads the page (via `WebFetch` or `get_page_text`), extracts events, and writes a simple raw JSON file. The generic scraper then handles all deterministic normalization: computing datetimes, deriving doors time, running `is_live_music` detection and artist parsing, filtering the lookahead window, and producing the full event schema.
+
+**You write the raw JSON. The scraper computes the rest.**
+
+#### Generic scraper: raw input format
+
+`.tmp/<venue_key>_raw.json` — a JSON array of objects:
+
+```json
+{
+  "slug":      "event-url-slug",          // URL path segment → event id. Required.
+  "title":     "Headliner Name",          // Pre-split by you. Required.
+  "subtitle":  "with Supporting Act",     // Pre-split by you. "" if none.
+  "presenter": "Promoter Presents",       // "" if none.
+  "date":      "2026-04-18",              // YYYY-MM-DD. Required.
+  "show_time": "20:00",                   // HH:MM 24-hour. Required.
+  "end_time":  "22:00",                   // HH:MM 24-hour. Optional — defaults to show_time + 2h.
+  "admission": "$10",                     // "" if unknown.
+  "url":       "https://venue.com/events/slug"  // Full event URL. Required.
+}
+```
+
+**Important:** `title` and `subtitle` must be **pre-split by you** before writing. The scraper passes them through as-is — it does not parse raw title strings. Apply the `//`, `w/`, and `,` splitting rules from the Scraper Fragility Notes above.
+
+**What the scraper computes automatically (not input fields):**
+- `doors` / `doors_datetime` — always `show_time − 1 hour`. **This is often wrong** — many venues post doors separately (e.g. `DOORS 7PM // SHOW 7:30PM`). Always capture the explicit doors time when shown and patch `doors` and `doors_datetime` in the scraped output before running `diff`. A future improvement would add an optional `doors_time` raw field to override the default.
+- `is_live_music` — keyword-detected from title/subtitle. **Always review and correct before `diff`.**
+- `artists` — parsed from title/subtitle. **Always review and fix before `diff`.**
+- `date_str`, `start_datetime`, `end_datetime` — computed from `date` + `show_time` + `end_time`.
+- Events outside `today … today+days` are filtered out automatically.
+
+```bash
+python3 pipeline/cli.py scrape generic --raw .tmp/<venue_key>_raw.json \
+                                       --out .tmp/scraped_<venue_key>.json \
+                                       [--days 90]
+```
+
+---
+
+### Scraper Fragility Notes
+
+Title splitting is handled automatically by per-venue scrapers (Kings, Cat's Cradle). For venues using `scrape generic` (including Chapel of Bones), **you** must pre-split titles before writing the raw JSON. Either way, these patterns apply (in priority order):
+1. ` / ` → co-headliners: `"A / B"` → title=`"A"`, subtitle=`"with B"`
+2. ` w/ ` → support acts: `"A w/ B, C"` → title=`"A"`, subtitle=`"with B, C"`
+3. `, ` → multiple acts (if all parts ≤ 6 words): `"A, B, C"` → title=`"A"`, subtitle=`"with B, C"`
+
+**Known failure modes to watch for:**
+- **Non-standard presenters**: `"An evening with X"`, `"Hosted by Y"` prefixes won't be stripped automatically — clean from the raw JSON before scraping.
+- **"w/ X, Y" comma mangling**: Fixed in scraper (w/ checked before commas), but verify output for multi-support events.
+- **Recurring series names**: `"Rock Roulette"`, `"Songwriter Showcase"` etc. are not artist names — set `artists: []` and verify `is_live_music`.
+
+After running the scraper, **always check the output** for these cases before running `diff`.
 
 ---
 
@@ -145,13 +235,8 @@ Artist name rules:
 - Strip tour/edition suffixes from headliner names: "RATBOYS : Tour Name" → headliner is "RATBOYS"
 - Events with `is_live_music: false` must have `artists: []`
 
-**3c — Enrich new artists**
-For each artist in the venue's live-music events not yet in `artists_db.json` (or with empty links):
-1. **Spotify**: `"{name}" site:open.spotify.com/artist` → URL + genre(s)
-2. **Bandcamp**: `"{name} bandcamp"` → URL + genre tags
-3. **Instagram**: `"{name} music instagram"` → profile URL if clearly music-related
-4. **YouTube**: `"{name} official youtube"` → channel URL
-Update `artists_db.json`. Set `last_enriched`. Budget: 4–6 searches/artist. Skip if name too generic or enriched within 30 days. Populate event's `music_links` from headliner's entry.
+**3c — New artists**
+Verify new artists are in each event's `artists` array with correct names and roles. Do **not** perform manual web searches for Spotify/Bandcamp/YouTube/Instagram — `enrich_genres.py` handles link and genre enrichment automatically via the Spotify API. It runs after all `set` calls in Step 5.
 
 ---
 
@@ -177,7 +262,7 @@ The `--report` flag writes a human-readable Markdown summary of new and changed 
 
 **Hash comparison is ephemeral:** `diff` always recomputes hashes from stored field values at comparison time. The stored `content_hash` field is never used for comparison — it is only updated when `set` or `repair` is run.
 
-**Content hash normalization:** `content_hash` normalizes text before hashing (NFKC, Unicode quote/dash folding, casefold, whitespace collapse). This prevents curly-vs-straight quotes, en-dash/em-dash, and case differences from appearing as spurious changes.
+**Content hash normalization:** `content_hash` normalizes text before hashing (NFKC, Unicode quote/dash folding, ordinal suffix stripping, casefold, whitespace collapse). This prevents curly-vs-straight quotes, en-dash/em-dash, ordinal suffixes (`17th` vs `17`), and case differences from appearing as spurious changes.
 
 | `diff` status | Action |
 |---------------|--------|
@@ -202,11 +287,14 @@ For each `"new"` or `"changed"` event from the diff output, write its full event
 python3 pipeline/cli.py set <event_id_tag>:<event_id> .tmp/events/<id>.json
 ```
 
-After all `set` calls, run repair and prune (`last_updated` is automatically stamped on the venue by each `set`, `delete`, and `prune` call):
+After all `set` calls, run repair and prune, then kick off genre enrichment in the background:
 ```bash
 python3 pipeline/cli.py repair
 python3 pipeline/cli.py prune --days 30
+python3 pipeline/enrich_genres.py &
 ```
+
+`enrich_genres.py` fetches Spotify genres and Bandcamp tags for any artists lacking enrichment. It can take several minutes for large batches — always run it with `&` so it doesn't block the upload step. It is safe to run after every scrape — it skips artists enriched within the last 30 days. If it exits with "quota exhausted", just re-run it later; the Spotify rate limit resets on a rolling 30-second window and large Retry-After values (~86400s) are a known API quirk meaning "back off now", not a true 24-hour ban.
 
 **Temp file cleanup:** Delete `.tmp/scraped_<venue_key>.json` and `.tmp/events/` after saving. Keep `.tmp/<venue_key>_changes.md` (the diff report) — do not delete it.
 
@@ -222,8 +310,13 @@ python3 pipeline/cli.py upload
 
 This pushes `live_music_events.json`, `artists_db.json`, and `venues_db.json` to R2.
 
-Then report:
+---
 
+## Step 7: Post-run analysis
+
+After each run, write a brief log covering:
+
+**Summary counts:**
 ```
 Venue processed: [Venue Name]
 Lookahead: [N] days (today through [date])
@@ -233,6 +326,20 @@ Unchanged (skipped): [N]
 Possibly removed (not deleted): [N]
 State file saved and uploaded.
 ```
+
+**Issues and friction encountered:** Document anything that required manual intervention or workarounds:
+- Did any JS extraction selectors fail or return 0 events? What was the fix?
+- Did the scraper mangle any title/subtitle splits? Which events, how were they fixed?
+- Were any `is_live_music` flags or artist arrays wrong and corrected?
+- Were any prices missing or hard to find?
+- Any site structure changes since last scrape?
+
+**Recommendations for next scrape:** Based on the issues above, what should be improved before the next run of this venue?
+- Selector updates needed in notes.md?
+- Scraper logic that needs fixing?
+- Venue-specific edge cases to add to this skill?
+
+This log should be frank and actionable — the goal is to make each subsequent scrape faster and less manual than the one before.
 
 ---
 
@@ -244,6 +351,7 @@ State file saved and uploaded.
 - Updated data uploaded to R2 (`python3 pipeline/cli.py upload`)
 - No duplicates created on re-runs
 - Unchanged events trigger zero state writes
+- Post-run analysis written
 
 ---
 
