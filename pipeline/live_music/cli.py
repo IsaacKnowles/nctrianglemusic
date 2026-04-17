@@ -238,7 +238,6 @@ def cmd_prune(args):
             print(f"  {v['name']}: removing {len(removed)} event(s) older than {cutoff}")
             for e in removed:
                 print(f"    - [{e.get('start_datetime','')}] {e.get('title','')}")
-            _touch_venue(v)
         v["events"] = kept
         total_removed += len(removed)
     if total_removed == 0:
