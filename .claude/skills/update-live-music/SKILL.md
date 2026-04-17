@@ -118,7 +118,7 @@ Write all scraped events to `.tmp/scraped_<venue_key>.json` for use in the diff 
 > **Skill accuracy check:** Each venue entry below makes specific claims about how the site works (rendering method, URL structure, extraction approach, etc.). Before proceeding, verify these claims against what you actually observe. If a significant claim no longer holds — the site has been redesigned, a JS framework replaced plain HTML, the URL structure changed, etc. — **stop, notify the user, and work with them to update this skill** before continuing. Do not silently improvise around structural changes; an updated skill is more valuable than a one-off workaround.
 
 #### Kings (`kings-id`)
-HTML is server-rendered — scraper auto-fetches, no browser step needed. See [venues/kings.md](venues/kings.md) for site notes and scrape/diff commands.
+Server-rendered HTML — use `WebFetch` to read the homepage, write `.tmp/kings_raw.json`, then run the scraper. See [venues/kings.md](venues/kings.md) for the raw format, extraction notes, and scrape/diff commands.
 
 #### Cat's Cradle (`cats-cradle-id`, `cats-cradle-br-id`)
 Two rooms tracked separately. See [venues/cats-cradle.md](venues/cats-cradle.md) for JS extraction snippet (with fallback), scrape/diff commands, and pricing notes.
