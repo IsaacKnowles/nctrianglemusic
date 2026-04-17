@@ -115,6 +115,8 @@ Write all scraped events to `.tmp/scraped_<venue_key>.json` for use in the diff 
 
 ### Venue-Specific Extraction
 
+> **Skill accuracy check:** Each venue entry below makes specific claims about how the site works (rendering method, URL structure, extraction approach, etc.). Before proceeding, verify these claims against what you actually observe. If a significant claim no longer holds — the site has been redesigned, a JS framework replaced plain HTML, the URL structure changed, etc. — **stop, notify the user, and work with them to update this skill** before continuing. Do not silently improvise around structural changes; an updated skill is more valuable than a one-off workaround.
+
 #### Kings (`kings-id`)
 HTML is server-rendered — scraper auto-fetches, no browser step needed. See [venues/kings.md](venues/kings.md) for site notes and scrape/diff commands.
 
@@ -124,8 +126,13 @@ Two rooms tracked separately. See [venues/cats-cradle.md](venues/cats-cradle.md)
 #### Chapel of Bones (`chapel-of-bones-id`)
 TickPick widget; no individual event pages. See [venues/chapel-of-bones.md](venues/chapel-of-bones.md) for JS extraction snippet and scrape/diff commands.
 
-#### Neptune's Parlour (`neptunes-parlour-id`)
-**URL:** `https://www.neptunesraleigh.com/events` — each show at `/events/{slug}`. No special handling beyond standard extraction.
+#### Neptune's Parlour (`neptunes-id`)
+**URL:** `https://www.neptunesraleigh.com/events` — Squarespace, renders in plain HTML. Use `get_page_text` to read the listing. Extract event slugs from the DOM with `javascript_tool` (`a[href*="/events/"]`). Titles use `//` as multi-act separator — pre-split before writing raw JSON. Use `scrape generic`.
+
+```bash
+python3 pipeline/cli.py scrape generic --raw .tmp/neptunes_raw.json --out .tmp/scraped_neptunes.json
+python3 pipeline/cli.py diff neptunes-id .tmp/scraped_neptunes.json --report .tmp/neptunes_changes.md
+```
 
 #### Slim's (`slims-id`)
 **URL:** `https://slimsraleigh.com/` — plain HTML; use `scrape generic`. Fetch monthly calendar pages (`/calendar/YYYY-MM/`) for the full lookahead window. Skip "Open Jam" and "Mingle @ Slim's" entries.
@@ -135,7 +142,12 @@ python3 pipeline/cli.py scrape generic --raw .tmp/slims_raw.json --out .tmp/scra
 ```
 
 #### Stanczyks (`stanczyks-id`)
-**URL:** `https://www.stanczyksdurham.com/#/events` — JS-rendered SPA. Use `javascript_tool` to extract event data directly from the DOM.
+**URL:** `https://www.stanczyksdurham.com/#/events` — JS-rendered SPA. Use `javascript_tool` to extract event data from the DOM, then write to raw JSON and use `scrape generic`.
+
+```bash
+python3 pipeline/cli.py scrape generic --raw .tmp/stanczyks_raw.json --out .tmp/scraped_stanczyks.json
+python3 pipeline/cli.py diff stanczyks-id .tmp/scraped_stanczyks.json --report .tmp/stanczyks_changes.md
+```
 
 #### Plain-HTML venues (no special handling)
 - **Lincoln Theatre** `https://lincolntheatre.com/events/`
@@ -145,22 +157,48 @@ python3 pipeline/cli.py scrape generic --raw .tmp/slims_raw.json --out .tmp/scra
 - **The Fruit** `https://www.durhamfruit.com/`
 - **Sharp 9 Gallery** `https://www.durhamjazzworkshop.org/`
 
-For plain-HTML venues, use `WebFetch` to collect event data across monthly calendar pages, then write a raw JSON file and normalize:
+For plain-HTML venues, Claude reads the page (via `WebFetch` or `get_page_text`), extracts events, and writes a simple raw JSON file. The generic scraper then handles all deterministic normalization: computing datetimes, deriving doors time, running `is_live_music` detection and artist parsing, filtering the lookahead window, and producing the full event schema.
+
+**You write the raw JSON. The scraper computes the rest.**
+
+#### Generic scraper: raw input format
+
+`.tmp/<venue_key>_raw.json` — a JSON array of objects:
+
+```json
+{
+  "slug":      "event-url-slug",          // URL path segment → event id. Required.
+  "title":     "Headliner Name",          // Pre-split by you. Required.
+  "subtitle":  "with Supporting Act",     // Pre-split by you. "" if none.
+  "presenter": "Promoter Presents",       // "" if none.
+  "date":      "2026-04-18",              // YYYY-MM-DD. Required.
+  "show_time": "20:00",                   // HH:MM 24-hour. Required.
+  "end_time":  "22:00",                   // HH:MM 24-hour. Optional — defaults to show_time + 2h.
+  "admission": "$10",                     // "" if unknown.
+  "url":       "https://venue.com/events/slug"  // Full event URL. Required.
+}
+```
+
+**Important:** `title` and `subtitle` must be **pre-split by you** before writing. The scraper passes them through as-is — it does not parse raw title strings. Apply the `//`, `w/`, and `,` splitting rules from the Scraper Fragility Notes above.
+
+**What the scraper computes automatically (not input fields):**
+- `doors` / `doors_datetime` — always `show_time − 1 hour`. **This is often wrong** — many venues post doors separately (e.g. `DOORS 7PM // SHOW 7:30PM`). Always capture the explicit doors time when shown and patch `doors` and `doors_datetime` in the scraped output before running `diff`. A future improvement would add an optional `doors_time` raw field to override the default.
+- `is_live_music` — keyword-detected from title/subtitle. **Always review and correct before `diff`.**
+- `artists` — parsed from title/subtitle. **Always review and fix before `diff`.**
+- `date_str`, `start_datetime`, `end_datetime` — computed from `date` + `show_time` + `end_time`.
+- Events outside `today … today+days` are filtered out automatically.
 
 ```bash
-# Raw input format (.tmp/<venue_key>_raw.json): list of objects with fields:
-#   slug, title, subtitle, presenter, date (YYYY-MM-DD), show_time (HH:MM 24h),
-#   end_time (HH:MM, optional), admission (optional), url
 python3 pipeline/cli.py scrape generic --raw .tmp/<venue_key>_raw.json \
-                           --out .tmp/scraped_<venue_key>.json \
-                           [--days 90]
+                                       --out .tmp/scraped_<venue_key>.json \
+                                       [--days 90]
 ```
 
 ---
 
 ### Scraper Fragility Notes
 
-The per-venue scrapers' `split_title_subtitle` function handles these patterns (in priority order):
+Title splitting is handled automatically by per-venue scrapers (Kings, Cat's Cradle, Chapel of Bones). For venues using `scrape generic`, **you** must pre-split titles before writing the raw JSON. Either way, these patterns apply (in priority order):
 1. ` / ` → co-headliners: `"A / B"` → title=`"A"`, subtitle=`"with B"`
 2. ` w/ ` → support acts: `"A w/ B, C"` → title=`"A"`, subtitle=`"with B, C"`
 3. `, ` → multiple acts (if all parts ≤ 6 words): `"A, B, C"` → title=`"A"`, subtitle=`"with B, C"`

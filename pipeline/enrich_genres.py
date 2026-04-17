@@ -29,6 +29,21 @@ from difflib import SequenceMatcher
 
 import requests
 
+# Load .env from pipeline/ or repo root (whichever exists first), if not already set
+def _load_dotenv():
+    here = pathlib.Path(__file__).parent
+    for candidate in [here / ".env", here.parent / ".env"]:
+        if candidate.exists():
+            for line in candidate.read_text().splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, _, v = line.partition("=")
+                    k = k.strip().removeprefix("export").strip()
+                    os.environ.setdefault(k, v.strip())
+            break
+
+_load_dotenv()
+
 ARTISTS_DB = str(pathlib.Path(__file__).parent / "artists_db.json")
 TOKEN_URL = "https://accounts.spotify.com/api/token"
 ARTISTS_URL = "https://api.spotify.com/v1/artists"
@@ -91,6 +106,9 @@ def fetch_artists_by_ids(ids: list[str], token: str) -> dict[str, list[str]]:
                 sys.exit(1)
             if resp.status_code == 429:
                 retry_after = int(resp.headers.get("Retry-After", 5 * (attempt + 1)))
+                if retry_after > 60:
+                    print(f"\n❌ Spotify rate-limited with Retry-After={retry_after}s — quota exhausted for today. Re-run later.", file=sys.stderr)
+                    sys.exit(1)
                 print(f"  ⏳ Spotify rate-limited — waiting {retry_after}s (attempt {attempt + 1}/5)", flush=True)
                 time.sleep(retry_after)
                 continue
@@ -118,6 +136,9 @@ def search_spotify(name: str, token: str, min_score: float) -> dict | None:
             sys.exit(1)
         if resp.status_code == 429:
             retry_after = int(resp.headers.get("Retry-After", 5 * (attempt + 1)))
+            if retry_after > 60:
+                print(f"\n❌ Spotify rate-limited with Retry-After={retry_after}s — quota exhausted for today. Re-run later.", file=sys.stderr)
+                sys.exit(1)
             print(f"  ⏳ Spotify rate-limited searching '{name}' — waiting {retry_after}s")
             time.sleep(retry_after)
             continue
@@ -256,13 +277,13 @@ def enrich(db: dict, token: str, dry_run: bool, limit: int | None, min_score: fl
             print(f"  ✅ {name} → '{result['name']}' (score={result['score']:.2f}): {result['genres']}")
             if not dry_run:
                 entry["genre"] = result["genres"]
-                entry["links"]["spotify"] = f"https://open.spotify.com/artist/{result['id']}"
+                entry.setdefault("links", {})["spotify"] = f"https://open.spotify.com/artist/{result['id']}"
                 entry["last_enriched"] = now
             stats["spotify_updated"] += 1
         elif result:
             print(f"  ⚠️  {name} → '{result['name']}' matched but Spotify has no genres — will try Bandcamp")
             if not dry_run:
-                entry["links"]["spotify"] = f"https://open.spotify.com/artist/{result['id']}"
+                entry.setdefault("links", {})["spotify"] = f"https://open.spotify.com/artist/{result['id']}"
             still_need.append((slug, entry))
         else:
             print(f"  —  {name}: no confident Spotify match — will try Bandcamp")
