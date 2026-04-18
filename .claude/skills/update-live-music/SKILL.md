@@ -149,8 +149,17 @@ python3 pipeline/cli.py scrape generic --raw .tmp/stanczyks_raw.json --out .tmp/
 python3 pipeline/cli.py diff stanczyks-id .tmp/scraped_stanczyks.json --report .tmp/stanczyks_changes.md
 ```
 
+#### Lincoln Theatre (`lincoln-id`)
+**URL:** `https://lincolntheatre.com/events/` — **do NOT use `WebFetch`**. The site is JavaScript-rendered; WebFetch silently truncates to ~21 events with no error. Use `javascript_tool` via Chrome. See [venues/lincoln-theatre.md](venues/lincoln-theatre.md) for the extraction snippet, slug drift notes, and scrape/diff commands.
+
+```bash
+python3 pipeline/cli.py scrape generic --raw .tmp/lincoln-theatre_raw.json \
+                                       --out .tmp/scraped_lincoln-theatre.json
+python3 pipeline/cli.py diff lincoln-id .tmp/scraped_lincoln-theatre.json \
+  --report .tmp/lincoln-theatre_changes.md
+```
+
 #### Plain-HTML venues (no special handling)
-- **Lincoln Theatre** `https://lincolntheatre.com/events/`
 - **Local 506** `https://local506.com/events/`
 - **Motorco** `https://motorcomusic.com/`
 - **The Pinhook** `https://thepinhook.com/events/`
