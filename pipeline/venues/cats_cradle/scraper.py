@@ -7,49 +7,41 @@ Back Room. The events listing page shows all events but does NOT include ticket
 prices — those only appear on individual event detail pages. This scraper
 fetches each event's detail page to extract the admission price.
 
+NOTE: As of 2026-04-25, the site uses the Rockhouse Partners / Etix theme.
+The old .tribe-* selectors no longer work. Use the snippet below.
+
 USAGE
 -----
 Step 1 — Extract raw event cards from the browser.
   Navigate to https://catscradle.com/events/ and run this JavaScript in the
   console (or via javascript_tool in Claude):
 
-    JSON.stringify(
-      Array.from(document.querySelectorAll('.tribe-events-calendar-list__event-article, article.type-tribe_events, .tribe-event'))
-        .map(el => ({
-          title:    el.querySelector('.tribe-event-url, .tribe-events-calendar-list__event-title a, h2 a, h3 a')?.textContent.trim() || '',
-          url:      el.querySelector('.tribe-event-url, .tribe-events-calendar-list__event-title a, h2 a, h3 a')?.href || '',
-          date:     el.querySelector('.tribe-event-date-start, time, .tribe-events-start-datetime')?.textContent.trim() || '',
-          time:     el.querySelector('.tribe-events-start-time, .tribe-event-time')?.textContent.trim() || '',
-          room:     el.querySelector('.tribe-venue-location, .tribe-venue, .tribe-events-calendar-list__event-venue')?.textContent.trim() || '',
-        }))
-        .filter(e => e.title && e.url)
-    )
-
-  NOTE: The Events Calendar plugin used by Cat's Cradle changes class names
-  periodically. If 0 events are returned, inspect the DOM and adjust selectors.
-  As a fallback, try:
-
-    JSON.stringify(
-      Array.from(document.querySelectorAll('h2 a[href*="/event/"], h3 a[href*="/event/"]'))
-        .map(a => ({
-          title: a.textContent.trim(),
-          url:   a.href,
-          date:  a.closest('article, li, div')?.querySelector('time, [class*="date"]')?.textContent.trim() || '',
-          time:  a.closest('article, li, div')?.querySelector('[class*="time"]')?.textContent.trim() || '',
-          room:  a.closest('article, li, div')?.querySelector('[class*="venue"], [class*="location"]')?.textContent.trim() || '',
-        }))
-        .filter(e => e.title)
-    )
+    const events = Array.from(document.querySelectorAll('.rhpSingleEvent')).map(el => {
+      const url = el.querySelector('a#eventTitle, .rhp-event-thumb a.url')?.href || '';
+      const titleRaw = el.querySelector('.eventTitleDiv h2')?.textContent.trim() || '';
+      const subtitleRaw = el.querySelector('.eventSubHeader')?.textContent.trim() || '';
+      const dateRaw = el.querySelector('.singleEventDate')?.textContent.trim() || '';
+      const timeRaw = el.querySelector('.rhp-event__time-text--list')?.textContent.trim() || '';
+      const room = el.querySelector('.venueLink')?.textContent.trim() || '';
+      const title = subtitleRaw ? `${titleRaw} w/ ${subtitleRaw}` : titleRaw;
+      const showMatch = timeRaw.match(/show[:\\s]+(\\d{1,2}(?::\\d{2})?\\s*(?:am|pm))/i);
+      const simpleMatch = timeRaw.match(/(\\d{1,2}(?::\\d{2})?\\s*(?:am|pm))/i);
+      const time = showMatch ? showMatch[1].trim() : (simpleMatch ? simpleMatch[1].trim() : '');
+      return { title, url, date: dateRaw, time, room };
+    });
+    JSON.stringify(events)
 
   Save the resulting JSON string to .tmp/cats_cradle_raw.json
 
-Step 2 — Run this script:
-    python3 scraper_cats_cradle.py [--raw .tmp/cats_cradle_raw.json] [--days 90]
+  Optional: add a "doors_time" field (e.g. "7:30 pm") to any event object to
+  override the default doors = show - 1hr calculation.
+
+Step 2 — Run the scraper:
+    python3 pipeline/cli.py scrape cats-cradle [--no-fetch] [--days 90]
 
   Flags:
-    --raw   .tmp/cats_cradle_raw.json   (default)
-    --days  90                          (lookahead window from today)
-    --no-fetch                          Skip individual page fetches (faster, but admission = "")
+    --days  90       Lookahead window from today (default)
+    --no-fetch       Skip individual page fetches (faster, but admission = "")
 
   Outputs two files:
     .tmp/scraped_cats-cradle.json            (Main Stage events)
@@ -58,8 +50,8 @@ Step 2 — Run this script:
 OUTPUT
 ------
 Each output file is a normalized event JSON list ready for:
-    python3 live_music_cli.py diff cats-cradle-id .tmp/scraped_cats-cradle.json
-    python3 live_music_cli.py diff cats-cradle-br-id .tmp/scraped_cats-cradle-back-room.json
+    python3 pipeline/cli.py diff cats-cradle-id .tmp/scraped_cats-cradle.json
+    python3 pipeline/cli.py diff cats-cradle-br-id .tmp/scraped_cats-cradle-back-room.json
 """
 
 from __future__ import annotations
@@ -158,7 +150,7 @@ def parse_date_string(date_str: str, year: int = None) -> datetime | None:
 
 def parse_time_string(time_str: str) -> tuple[int, int] | None:
     s = time_str.strip()
-    m = re.match(r"(\d{1,2}):?(\d{2})?\s*(am|pm)?", s, re.I)
+    m = re.search(r"(\d{1,2}):?(\d{2})?\s*(am|pm)", s, re.I)
     if not m:
         return None
     hour, minute, ampm = m.groups()
@@ -194,15 +186,15 @@ def split_title_subtitle(raw_title: str) -> tuple[str, str, str]:
         parts = [p.strip() for p in raw_title.split(" / ")]
         return parts[0], "with " + ", ".join(parts[1:]), presenter
 
+    if " w/ " in raw_title:
+        idx = raw_title.index(" w/ ")
+        return raw_title[:idx].strip(), "w/ " + raw_title[idx + 4:].strip(), presenter
+
     if ", " in raw_title:
         parts = [p.strip() for p in raw_title.split(", ")]
         if all(len(p.split()) <= 6 for p in parts) and len(parts) >= 2:
             if not re.search(r'\b(the|learn|edition|market|tribute|competition|club)\b', raw_title, re.I):
                 return parts[0], "with " + ", ".join(parts[1:]), presenter
-
-    if " w/ " in raw_title:
-        idx = raw_title.index(" w/ ")
-        return raw_title[:idx].strip(), "w/ " + raw_title[idx + 4:].strip(), presenter
 
     return raw_title, "", presenter
 
@@ -305,16 +297,19 @@ def parse_args():
     return raw_file, days, fetch
 
 
-def run(raw_path=DEFAULT_RAW, days=DEFAULT_DAYS, fetch=True):
+def run(raw_path=DEFAULT_RAW, days=DEFAULT_DAYS, fetch=True,
+        out_main=DEFAULT_OUT_MAIN, out_back=DEFAULT_OUT_BACK):
     """Normalize raw Cat's Cradle event JSON into the standard schema.
 
     Outputs two files (always):
-      .tmp/scraped_cats-cradle.json           (Main Stage)
-      .tmp/scraped_cats-cradle-back-room.json (Back Room)
+      out_main  (default: .tmp/scraped_cats-cradle.json)           Main Stage
+      out_back  (default: .tmp/scraped_cats-cradle-back-room.json) Back Room
 
-    raw_path: path to .tmp/cats_cradle_raw.json
-    days:     lookahead window in days
-    fetch:    if True, fetches each event page for admission price (slower)
+    raw_path:  path to .tmp/cats_cradle_raw.json
+    days:      lookahead window in days
+    fetch:     if True, fetches each event page for admission price (slower)
+    out_main:  output path for Main Stage events
+    out_back:  output path for Back Room events
     """
     raw_path = Path(raw_path)
     if not raw_path.exists():
@@ -368,8 +363,18 @@ def run(raw_path=DEFAULT_RAW, days=DEFAULT_DAYS, fetch=True):
         show_hour, show_min = hm if hm else (20, 0)
 
         start_dt  = date_dt.replace(hour=show_hour, minute=show_min)
-        doors_dt  = start_dt - timedelta(hours=1)
         end_dt    = start_dt + timedelta(hours=2)
+
+        raw_doors = raw.get("doors_time", "").strip()
+        if raw_doors:
+            parsed_doors = parse_time_string(raw_doors)
+            if parsed_doors:
+                dh, dm = parsed_doors
+                doors_dt = start_dt.replace(hour=dh, minute=dm)
+            else:
+                doors_dt = start_dt - timedelta(hours=1)
+        else:
+            doors_dt = start_dt - timedelta(hours=1)
 
         day_name   = start_dt.strftime("%A")
         month_name = FULL_MONTH_NAMES[start_dt.month]
@@ -414,15 +419,15 @@ def run(raw_path=DEFAULT_RAW, days=DEFAULT_DAYS, fetch=True):
 
     os.makedirs(".tmp", exist_ok=True)
 
-    with open(DEFAULT_OUT_MAIN, "w") as f:
+    with open(out_main, "w") as f:
         json.dump(main_events, f, indent=2, ensure_ascii=False)
 
-    with open(DEFAULT_OUT_BACK, "w") as f:
+    with open(out_back, "w") as f:
         json.dump(back_events, f, indent=2, ensure_ascii=False)
 
     print(f"Cat's Cradle scraper complete:")
-    print(f"   Main Stage:  {len(main_events)} events -> {DEFAULT_OUT_MAIN}")
-    print(f"   Back Room:   {len(back_events)} events -> {DEFAULT_OUT_BACK}")
+    print(f"   Main Stage:  {len(main_events)} events -> {out_main}")
+    print(f"   Back Room:   {len(back_events)} events -> {out_back}")
     if skipped:
         print(f"   (skipped {skipped} events outside lookahead window or unparseable)")
 
