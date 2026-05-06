@@ -159,9 +159,16 @@ python3 pipeline/cli.py diff lincoln-id .tmp/scraped_lincoln-theatre.json \
   --report .tmp/lincoln-theatre_changes.md
 ```
 
+#### Motorco (`motorco-id`)
+**URL:** `https://motorcomusic.com/` — **do NOT use `WebFetch` on the homepage** — it is JS-rendered and returns no event data. Use `javascript_tool` via Chrome. See [venues/motorco.md](venues/motorco.md) for the extraction snippet, known quirks, and scrape/diff commands.
+
+```bash
+python3 pipeline/cli.py scrape generic --raw .tmp/motorco_raw.json --out .tmp/scraped_motorco.json
+python3 pipeline/cli.py diff motorco-id .tmp/scraped_motorco.json --report .tmp/motorco_changes.md
+```
+
 #### Plain-HTML venues (no special handling)
 - **Local 506** `https://local506.com/events/`
-- **Motorco** `https://motorcomusic.com/`
 - **The Pinhook** `https://thepinhook.com/events/`
 - **The Fruit** `https://www.durhamfruit.com/`
 - **Sharp 9 Gallery** `https://www.durhamjazzworkshop.org/`
@@ -216,6 +223,8 @@ Title splitting is handled automatically by per-venue scrapers (Kings, Cat's Cra
 - **Non-standard presenters**: `"An evening with X"`, `"Hosted by Y"` prefixes won't be stripped automatically — clean from the raw JSON before scraping.
 - **"w/ X, Y" comma mangling**: Fixed in scraper (w/ checked before commas), but verify output for multi-support events.
 - **Recurring series names**: `"Rock Roulette"`, `"Songwriter Showcase"` etc. are not artist names — set `artists: []` and verify `is_live_music`.
+- **`&` inside band names**: The scraper treats `&` as an artist separator in some contexts. Band names like `"NATHAN ARIZONA & THE NEW MEXICANS"` or `"HOUSE & HOME"` must be written as a single subtitle entry — do not let them appear adjacent to a comma (e.g. write `"with IDLE HEIRS, NATHAN ARIZONA & THE NEW MEXICANS"`, not split further). Always verify the `artists` array after scraping for unexpected splits.
+- **"with" in event titles causing false subtitle matches**: Titles like `"CURFEW CLUB : A Dance Party for Babes with a Bedtime"` will have the subtitle regex match `"a Bedtime"`. After scraping, check `is_live_music: false` events and clear any spurious subtitle/artists values.
 
 After running the scraper, **always check the output** for these cases before running `diff`.
 
